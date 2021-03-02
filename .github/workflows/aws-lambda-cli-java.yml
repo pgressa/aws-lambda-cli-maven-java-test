@@ -1,0 +1,53 @@
+name: AWS Lambda Java CD
+on: [push, pull_request]
+
+env:
+  AWS_REGION: eu-central-1
+  FUNCTION_NAME: aws-lambda-cli-maven-java-test
+  FUNCTION_TIMEOUT: 30
+  FUNCTION_MEMORY: 512
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/.m2
+          key: ${{ runner.os }}-maven-test-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-test-
+      - name: Set up JDK 11
+        uses: actions/setup-java@v1
+        with:
+          java-version: 11
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Build Application
+        run: |
+          ./mvnw package -Dpackaging=jar --no-transfer-progress
+      - name: Deploy to AWS Lambda
+        env:
+            AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          ZIP_PATH=$(ls target/aws-lambda-cli-maven-java-test-*.jar)
+          if aws lambda get-function --function-name "${FUNCTION_NAME}" > /dev/null 2>&1; then
+            aws lambda update-function-code \
+              --function-name "${FUNCTION_NAME}" \
+              --zip-file fileb://${ZIP_PATH}
+          else
+            aws lambda create-function \
+              --function-name "${FUNCTION_NAME}" \
+              --zip-file fileb://${ZIP_PATH} \
+              --timeout ${FUNCTION_TIMEOUT} \
+              --memory-size  ${FUNCTION_MEMORY} \
+              --role $AWS_ROLE_ARN \
+              --runtime java11 \
+              --handler io.micronaut.function.aws.proxy.MicronautLambdaHandler
+          fi
